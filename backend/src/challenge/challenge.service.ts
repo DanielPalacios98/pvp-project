@@ -1,11 +1,11 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ChallengeService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  // 1. CREAR RETO (El sistema retiene las monedas del creador)
+  // 1. CREAR RETO
   async createChallenge(creatorId: string, amount: number, gameId: string) {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: creatorId } });
@@ -18,13 +18,11 @@ export class ChallengeService {
         data: { creatorId, stakeAmount: amount, gameId, status: 'OPEN' },
       });
 
-      // Retirar monedas del creador (Escrow)
       await tx.user.update({
         where: { id: creatorId },
         data: { coins: { decrement: amount } },
       });
 
-      // Auditoría
       await tx.walletLedger.create({
         data: {
           userId: creatorId,
@@ -39,7 +37,7 @@ export class ChallengeService {
     });
   }
 
-  // 2. ACEPTAR RETO (El sistema retiene las monedas del oponente)
+  // 2. ACEPTAR RETO
   async acceptChallenge(challengeId: string, opponentId: string) {
     return this.prisma.$transaction(async (tx) => {
       const challenge = await tx.challenge.findUnique({ where: { id: challengeId } });
@@ -57,19 +55,16 @@ export class ChallengeService {
         throw new BadRequestException('No tienes saldo suficiente para aceptar');
       }
 
-      // Actualizar reto
       const updatedChallenge = await tx.challenge.update({
         where: { id: challengeId },
         data: { opponentId, status: 'ACCEPTED' },
       });
 
-      // Retirar monedas del oponente (Escrow)
       await tx.user.update({
         where: { id: opponentId },
         data: { coins: { decrement: challenge.stakeAmount } },
       });
 
-      // Auditoría
       await tx.walletLedger.create({
         data: {
           userId: opponentId,
@@ -84,11 +79,26 @@ export class ChallengeService {
     });
   }
 
-  // 3. LISTAR RETOS ABIERTOS
-  async getOpenChallenges() {
-    return this.prisma.challenge.findMany({
-      where: { status: 'OPEN' },
-      include: { creator: { select: { username: true } } }
-    });
-  }
-}
+  // 3. RESOLVER RETO (La función que daba el error)
+  async resolveChallenge(challengeId: string, winnerId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const challenge = await tx.challenge.findUnique({
+        where: { id: challengeId },
+      });
+
+      if (!challenge) throw new NotFoundException('El reto no existe');
+      
+      if (challenge.status !== 'ACCEPTED') {
+        throw new BadRequestException('El reto no está aceptado o ya fue resuelto');
+      }
+
+      if (winnerId !== challenge.creatorId && winnerId !== challenge.opponentId) {
+        throw new ForbiddenException('El ganador debe ser un participante del reto');
+      }
+
+      const totalPot = challenge.stakeAmount.toNumber() * 2;
+      const commissionRate = 0.10; 
+      const platformFee = totalPot * commissionRate;
+      const winnerPrize = totalPot - platformFee;
+
+      await tx.challeng

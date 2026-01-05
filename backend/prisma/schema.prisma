@@ -1,14 +1,44 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// backend/prisma/schema.prisma
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
+  engineType = "library"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+model User {
+  id               String           @id @default(uuid())
+  username         String           @unique
+  email            String           @unique
+  coins            Decimal          @default(0)
+  createdAt        DateTime         @default(now())
+  ledger           WalletLedger[]
+  createdChallenges Challenge[]     @relation("CreatedChallenges")
+}
+
+model WalletLedger {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  type            String   
+  amount          Decimal
+  description     String?
+  idempotencyKey  String   @unique
+  createdAt       DateTime @default(now())
+}
+
+model Challenge {
+  id            String   @id @default(uuid())
+  creatorId     String
+  opponentId    String?  
+  stakeAmount   Decimal  
+  gameId        String   
+  status        String   @default("OPEN") 
+  winnerId      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  creator       User     @relation("CreatedChallenges", fields: [creatorId], references: [id])
 }
